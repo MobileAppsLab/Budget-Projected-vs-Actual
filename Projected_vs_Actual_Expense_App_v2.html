@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expense History</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f3f5f3;color:#222}
+header{background:#176b3a;color:#fff;padding:18px 14px;text-align:center}
+h1{margin:0;font-size:25px}
+.subtitle{margin-top:4px;font-size:14px;opacity:.9}
+.container{max-width:760px;margin:auto;padding:14px}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px #ccc}
+label{display:block;font-size:13px;color:#666;margin-bottom:5px}
+select,button{width:100%;padding:12px;border-radius:9px;border:1px solid #ccc;font-size:16px}
+button{background:#176b3a;color:#fff;border:0;cursor:pointer}
+button.secondary{background:#666}
+.tabs{display:flex;gap:7px;margin-bottom:12px}
+.tabs button{flex:1;background:#ddd;color:#333}
+.tabs button.active{background:#176b3a;color:#fff}
+.status{text-align:center;color:#666;padding:12px}
+.metricGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.metric{background:#f5f6f5;border-radius:10px;padding:12px;text-align:center}
+.metric .value{font-size:21px;font-weight:bold;margin-top:5px}
+.metric .label{font-size:12px;color:#666}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:9px 6px;border-bottom:1px solid #e5e5e5;text-align:right}
+th:first-child,td:first-child{text-align:left}
+th{color:#666;font-weight:600}
+.under{color:#176b3a}
+.over{color:#b3261e}
+.bar{height:8px;background:#e5e5e5;border-radius:5px;overflow:hidden}
+.bar span{display:block;height:100%;background:#176b3a}
+.rowTitle{font-weight:bold;font-size:18px;margin-bottom:10px}
+.compareGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.small{font-size:13px;color:#666}
+.empty{text-align:center;padding:25px;color:#777}
+.month-row{cursor:pointer}
+.month-row:hover{background:#f7faf8}
+.month-row td:first-child{font-weight:700}
+.month-arrow{display:inline-block;width:18px;color:#176b3a;font-weight:bold}
+.month-details td{background:#fafcfb}
+.month-details table{margin:0 0 6px 0;font-size:13px}
+.month-details table th,.month-details table td{padding:7px 6px}
+.month-details .detail-total td{font-weight:bold;border-top:1px solid #d8dfda}
+
+@media(max-width:520px){
+ .metricGrid{grid-template-columns:1fr}
+ .compareGrid{grid-template-columns:1fr}
+ table{font-size:13px}
+}
+</style>
+</head>
+<body>
+<header>
+<h1>Expense History</h1>
+<div class="subtitle">Projected vs Actual</div>
+</header>
+
+<div class="container">
+<div id="status" class="status">Loading expense data...</div>
+
+<div id="app" style="display:none">
+<div class="card">
+<label>View Year</label>
+<select id="yearSelect" onchange="renderYear()"></select>
+</div>
+
+<div class="tabs">
+<button id="tabYear" class="active" onclick="showTab('year')">Year</button>
+<button id="tabCompare" onclick="showTab('compare')">Compare</button>
+</div>
+
+<section id="yearTab">
+<div class="card">
+<div class="metricGrid">
+<div class="metric"><div class="label">Budget</div><div class="value" id="budget">$0</div></div>
+<div class="metric"><div class="label">Actual</div><div class="value" id="actual">$0</div></div>
+<div class="metric"><div class="label">Variance</div><div class="value" id="variance">$0</div></div>
+</div>
+</div>
+
+<div class="card">
+<div class="rowTitle">Expenses by Category</div>
+<div id="categoryTable"></div>
+</div>
+
+<div class="card">
+<div class="rowTitle">Monthly Spending</div>
+<div id="monthlyTable"></div>
+</div>
+
+<div class="card">
+<div class="rowTitle">Other / Extra Expenses</div>
+<div id="extrasTable"></div>
+</div>
+</section>
+
+<section id="compareTab" style="display:none">
+<div class="card">
+<div class="compareGrid">
+<div><label>Category</label><select id="categorySelect" onchange="renderCompare()"></select></div>
+<div><label>Start Year</label><select id="startYear" onchange="renderCompare()"></select></div>
+</div>
+</div>
+<div class="card">
+<div class="rowTitle">Year-by-Year Comparison</div>
+<div id="compareTable"></div>
+</div>
+</section>
+</div>
+</div>
+
+<script>
+const DATA_URL = "https://script.google.com/macros/s/AKfycbxWtFOkt1Cs7HYuYJNNJ7IND1aFxPGjJb5JyTX6uXUStG0nwplq0zVhAUHGuTiQjSWeGQ/exec";
+let data = null;
+
+function loadData(){
+  const cb = "expenseCallback_" + Date.now();
+  window[cb] = function(result){
+    try{
+      if(!result || !result.success) throw new Error(result && result.error || "Data error");
+      data = result.years || [];
+      if(!data.length) throw new Error("No yearly sheets found");
+      delete window[cb];
+      const s=document.getElementById(cb); if(s)s.remove();
+      initialize();
+    }catch(e){showError(e.message)}
+  };
+  const script=document.createElement("script");
+  script.id=cb;
+  script.src=DATA_URL+"?callback="+encodeURIComponent(cb)+"&_="+Date.now();
+  script.onerror=()=>{delete window[cb];script.remove();showError("Could not load the Google Sheet data.");};
+  document.body.appendChild(script);
+}
+
+function initialize(){
+  const ys=document.getElementById("yearSelect");
+  const sy=document.getElementById("startYear");
+  ys.innerHTML=data.map(y=>`<option value="${y.year}">${y.year}</option>`).join("");
+  sy.innerHTML=data.map(y=>`<option value="${y.year}">${y.year}</option>`).join("");
+  ys.value=data[data.length-1].year;
+  sy.value=data[0].year;
+  buildCategoryList();
+  document.getElementById("status").style.display="none";
+  document.getElementById("app").style.display="block";
+  renderYear();
+}
+
+function getYear(y){return data.find(x=>String(x.year)===String(y))}
+function money(n){return "$"+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})}
+function money2(n){return "$"+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+
+function renderYear(){
+  const y=getYear(document.getElementById("yearSelect").value);
+  if(!y)return;
+  document.getElementById("budget").textContent=money(y.totalBudget);
+  document.getElementById("actual").textContent=money(y.totalActual);
+  const v=y.variance;
+  const ve=document.getElementById("variance");
+  ve.textContent=money(v);
+  ve.className="value "+(v>=0?"under":"over");
+
+  const oldOU=document.getElementById("overUnderCard");
+  if(oldOU) oldOU.remove();
+
+  const cats=y.categories||[];
+  document.getElementById("categoryTable").innerHTML=cats.length?`
+  <table><thead><tr><th>Category</th><th>Budget</th><th>Actual</th><th>Var.</th></tr></thead>
+  <tbody>${cats.map(c=>`<tr>
+    <td>${esc(c.name)}</td><td>${money(c.budget)}</td><td>${money(c.actual)}</td>
+    <td class="${c.variance>=0?'under':'over'}">${money(c.variance)}</td>
+  </tr>`).join("")}</tbody></table>`:'<div class="empty">No category data found.</div>';
+
+  const months = y.months || [];
+  const monthlyBudget = cats.reduce((sum,c)=>sum + Number(c.budget||0),0);
+
+  const monthlyTotals = {};
+  months.forEach(m=>{
+    monthlyTotals[m] = cats.reduce((sum,c)=>sum + Number((c.monthly&&c.monthly[m])||0),0);
+  });
+
+  const monthlyRows = months.map((m,i)=>{
+    const actual = monthlyTotals[m] || 0;
+    const delta = monthlyBudget - actual;
+    return `
+      <tr class="month-row" onclick="toggleMonthDetail(${i})" aria-expanded="false">
+        <td><span class="month-arrow" id="arrow-${i}">▶</span>${esc(m)}</td>
+        <td>${money(monthlyBudget)}</td>
+        <td>${money(actual)}</td>
+        <td class="${delta>=0?'under':'over'}">${money(delta)}</td>
+      </tr>
+      <tr id="month-detail-${i}" class="month-details" style="display:none">
+        <td colspan="4">
+          <table>
+            <thead><tr><th>${esc(m)}</th><th>Amount</th></tr></thead>
+            <tbody>
+              ${cats.map(c=>`<tr>
+                <td>${esc(c.name)}</td>
+                <td>${money((c.monthly&&c.monthly[m])||0)}</td>
+              </tr>`).join("")}
+              <tr class="detail-total">
+                <td>Total</td><td>${money(actual)}</td>
+              </tr>
+              <tr class="detail-total">
+                <td>Budget Delta</td>
+                <td class="${delta>=0?'under':'over'}">${money(delta)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </td>
+      </tr>`;
+  }).join("");
+
+  document.getElementById("monthlyTable").innerHTML=months.length?`
+  <table>
+    <thead><tr><th>Month</th><th>Budget</th><th>Actual</th><th>Delta</th></tr></thead>
+    <tbody>${monthlyRows}</tbody>
+  </table>`:'<div class="empty">No monthly data found.</div>';
+
+  // Full-year Over/Under by Category.
+  const categoryBudget = cats.reduce((sum,c)=>sum + Number(c.budget||0),0);
+  const categoryActual = cats.reduce((sum,c)=>sum + Number(c.actual||0),0);
+  const categoryRows = cats.map(c=>`
+    <tr>
+      <td>${esc(c.name)}</td>
+      <td>${money(c.budget * months.length)}</td>
+      <td>${money(c.actual)}</td>
+      <td class="${(c.budget*months.length-c.actual)>=0?'under':'over'}">${money(c.budget*months.length-c.actual)}</td>
+    </tr>`).join("");
+
+  document.getElementById("categoryTable").insertAdjacentHTML("afterend", `
+    <div class="card" id="overUnderCard">
+      <div class="rowTitle">Over/Under By Category</div>
+      <table>
+        <thead><tr><th>Category</th><th>Budget</th><th>Actual</th><th>Delta</th></tr></thead>
+        <tbody>
+          ${categoryRows}
+          <tr class="detail-total">
+            <td>Grand Total</td>
+            <td>${money(categoryBudget * months.length)}</td>
+            <td>${money(categoryActual)}</td>
+            <td class="${(categoryBudget*months.length-categoryActual)>=0?'under':'over'}">${money(categoryBudget*months.length-categoryActual)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`);
+
+  const extras=y.extras||[];
+  document.getElementById("extrasTable").innerHTML=extras.length?
+  `<table><thead><tr><th>Item</th><th>Amount</th></tr></thead><tbody>${
+    extras.map(x=>`<tr><td>${esc(x.name)}${x.note?`<div class="small">${esc(x.note)}</div>`:""}</td><td>${money2(x.amount)}</td></tr>`).join("")
+  }</tbody></table>`:'<div class="empty">No extra expenses found.</div>';
+}
+
+
+function toggleMonthDetail(index){
+  const row=document.getElementById("month-detail-"+index);
+  const arrow=document.getElementById("arrow-"+index);
+  const trigger=arrow ? arrow.closest("tr") : null;
+  if(!row)return;
+  const open=row.style.display!=="none";
+  row.style.display=open?"none":"table-row";
+  if(arrow)arrow.textContent=open?"▶":"▼";
+  if(trigger)trigger.setAttribute("aria-expanded",String(!open));
+}
+
+function buildCategoryList(){
+  const names=[];
+  data.forEach(y=>(y.categories||[]).forEach(c=>{if(!names.includes(c.name))names.push(c.name)}));
+  names.sort();
+  document.getElementById("categorySelect").innerHTML='<option value="__all">All Categories</option>'+names.map(n=>`<option>${esc(n)}</option>`).join("");
+}
+
+function renderCompare(){
+  const category=document.getElementById("categorySelect").value;
+  const start=Number(document.getElementById("startYear").value);
+  const years=data.filter(y=>Number(y.year)>=start);
+  document.getElementById("compareTable").innerHTML=years.length?`
+  <table><thead><tr><th>Year</th><th>Budget</th><th>Actual</th><th>Var.</th></tr></thead>
+  <tbody>${years.map(y=>{
+    let budget=0,actual=0;
+    if(category==="__all"){
+      budget=y.categories.reduce((s,c)=>s+c.budget,0);
+      actual=y.totalActual;
+      // The script's totalBudget accounts for the number of months.
+      budget=y.totalBudget;
+    }else{
+      const c=(y.categories||[]).find(c=>c.name===category);
+      if(c){budget=c.budget*(y.months||[]).length;actual=c.actual;}
+    }
+    const v=budget-actual;
+    return `<tr><td>${y.year}</td><td>${money(budget)}</td><td>${money(actual)}</td><td class="${v>=0?'under':'over'}">${money(v)}</td></tr>`;
+  }).join("")}</tbody></table>`:'<div class="empty">No comparison data.</div>';
+}
+
+function showTab(tab){
+  const year=tab==="year";
+  document.getElementById("yearTab").style.display=year?"block":"none";
+  document.getElementById("compareTab").style.display=year?"none":"block";
+  document.getElementById("tabYear").classList.toggle("active",year);
+  document.getElementById("tabCompare").classList.toggle("active",!year);
+  if(!year)renderCompare();
+}
+
+function showError(msg){
+  document.getElementById("status").innerHTML='<div class="empty">'+esc(msg)+'<br><br>Check the Google Apps Script deployment and make sure it is set to <b>Anyone</b>.</div>';
+}
+
+function esc(s){
+  return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+loadData();
+</script>
+</body>
+</html>
